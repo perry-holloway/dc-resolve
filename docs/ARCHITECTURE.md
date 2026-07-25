@@ -101,6 +101,23 @@ sensors that report non-OK health or cross a critical threshold. Missing BMC
 configuration, transport errors, non-2xx responses, and malformed payloads
 produce `CANNOT_RUN`.
 
+### NVMe SMART probe
+
+The NVMe probe shells out to `smartctl` (smartmontools), which is available on
+Linux, macOS, and Windows and does not require a vendor-specific tool. It
+first runs `smartctl --scan-open --json` to enumerate attached NVMe devices,
+then runs `smartctl -a -j <device>` per device and parses the
+`nvme_smart_health_information_log` block. A device is marked degraded when
+any of the following hold:
+
+- `critical_warning` is non-zero;
+- one or more `media_errors` are recorded;
+- `percentage_used` reaches the configured threshold (default 90%);
+- `available_spare` has dropped below `available_spare_threshold`.
+
+Missing `smartctl`, a failed scan, or malformed JSON produce `CANNOT_RUN`
+rather than a false pass.
+
 ## Local field dashboard
 
 The Bubble Tea dashboard consumes the same `DiagnosticResult` objects used by

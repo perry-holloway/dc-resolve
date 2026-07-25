@@ -93,12 +93,32 @@ pattern verifier.
 Linux uses `lspci -vvv`; macOS uses
 `system_profiler SPPCIDataType -json`.
 
+### NVMe SMART health
+
+```bash
+./dce-diag --test-nvme
+```
+
+Requires `smartctl` (smartmontools) on `PATH`. The probe scans for attached
+NVMe devices, then reads each device's SMART health log and fails when a
+device reports a non-zero critical-warning bitmask, one or more recorded media
+errors, available spare below its threshold, or `percentage_used` at or above
+the configured limit:
+
+```bash
+./dce-diag --test-nvme --nvme-max-percentage-used=80
+```
+
+`--nvme-max-percentage-used` defaults to `90`. When `smartctl` is missing or a
+scan fails outright, the probe returns `CANNOT_RUN` rather than a false pass.
+
 ### Combined run
 
 ```bash
 ./dce-diag \
   --test-memory --mem-mb=1024 --mem-sec=15 \
-  --test-pcie
+  --test-pcie \
+  --test-nvme
 ```
 
 Without `--tui`, completed results are written as OCP-style JSON objects.

@@ -16,6 +16,7 @@ func main() {
 	runMemory := flag.Bool("test-memory", false, "run SAT or portable memory stress test")
 	runPCIe := flag.Bool("test-pcie", false, "audit PCIe topology and link degradation")
 	runThermal := flag.Bool("test-thermal", false, "audit Redfish temperatures, fans, power supplies, and voltage rails")
+	runNVMe := flag.Bool("test-nvme", false, "audit NVMe SMART health via smartctl")
 	showTUI := flag.Bool("tui", false, "show completed results in the interactive field dashboard")
 	memoryMB := flag.Int("mem-mb", 1024, "RAM size in MB to stress test")
 	memorySeconds := flag.Int("mem-sec", 30, "duration in seconds for memory test")
@@ -24,10 +25,11 @@ func main() {
 	bmcUser := flag.String("bmc-user", "", "Redfish BMC username")
 	bmcSystemID := flag.String("bmc-system-id", "system", "Redfish Systems resource ID")
 	bmcChassisID := flag.String("bmc-chassis-id", "chassis", "Redfish Chassis resource ID")
+	nvmeMaxPercentageUsed := flag.Int("nvme-max-percentage-used", 90, "mark an NVMe device degraded once percentage_used reaches this value")
 	flag.Parse()
 
-	if !*runMemory && !*runPCIe && !*runThermal {
-		fmt.Fprintln(os.Stderr, "no diagnostic selected; use --test-memory, --test-pcie, and/or --test-thermal")
+	if !*runMemory && !*runPCIe && !*runThermal && !*runNVMe {
+		fmt.Fprintln(os.Stderr, "no diagnostic selected; use --test-memory, --test-pcie, --test-thermal, and/or --test-nvme")
 		os.Exit(2)
 	}
 
@@ -67,6 +69,14 @@ func main() {
 			bmc.ChassisID = *bmcChassisID
 			result = bmc.AuditThermalSensors()
 		}
+		results = append(results, result)
+		exitCode = exitCodeForResult(result, exitCode)
+	}
+
+	if *runNVMe {
+		result := probes.AuditNVMeHealth(probes.NVMeAuditOpts{
+			MaxPercentageUsed: *nvmeMaxPercentageUsed,
+		})
 		results = append(results, result)
 		exitCode = exitCodeForResult(result, exitCode)
 	}

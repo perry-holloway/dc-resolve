@@ -20,6 +20,8 @@ central collector.
 - Audits Linux PCIe link width and speed using `lspci`.
 - Inventories macOS PCIe devices using `system_profiler`.
 - Audits Redfish temperatures, fan RPM, PSU health, and voltage rails.
+- Audits NVMe SMART health (critical warnings, media errors, spare capacity,
+  wear level) using `smartctl`.
 - Provides an interactive Bubble Tea dashboard for crash-cart and serial-console
   technicians.
 - Produces consistent JSON results with `PASS`, `FAIL`, or `CANNOT_RUN`.
@@ -34,9 +36,11 @@ flowchart LR
     B --> C["Memory probe"]
     B --> D["PCIe probe"]
     B --> T["Redfish thermal/power probe"]
+    B --> N["NVMe SMART probe"]
     C --> E["OCP-style JSON results"]
     D --> E
     T --> E
+    N --> E
     E --> F["Central collector"]
     F --> G["DC Resolve repair console"]
     G --> H["FRU replacement workflow"]
@@ -113,6 +117,12 @@ Run both:
 ./dce-diag --test-memory --mem-mb=1024 --mem-sec=15 --test-pcie
 ```
 
+Run an NVMe SMART health audit:
+
+```bash
+./dce-diag --test-nvme
+```
+
 Run a Redfish thermal/power audit and open the field dashboard:
 
 ```bash
@@ -128,11 +138,11 @@ export BMC_PASSWORD='from-your-secret-manager'
 
 ## Platform behavior
 
-| Platform | Memory diagnostic | PCIe diagnostic |
-| --- | --- | --- |
-| Linux | Uses `sat` when installed; otherwise portable pattern verification | Uses `lspci -vvv`, including downgraded speed/width detection |
-| macOS | Portable pattern verification | Uses `system_profiler SPPCIDataType -json` |
-| Windows | Portable pattern verification | Returns `CANNOT_RUN` unless a compatible `lspci` is installed |
+| Platform | Memory diagnostic | PCIe diagnostic | NVMe diagnostic |
+| --- | --- | --- | --- |
+| Linux | Uses `sat` when installed; otherwise portable pattern verification | Uses `lspci -vvv`, including downgraded speed/width detection | Uses `smartctl`, when installed |
+| macOS | Portable pattern verification | Uses `system_profiler SPPCIDataType -json` | Uses `smartctl`, when installed |
+| Windows | Portable pattern verification | Returns `CANNOT_RUN` unless a compatible `lspci` is installed | Uses `smartctl`, when installed |
 
 Linux is the intended production environment for server-grade ECC telemetry,
 DIMM isolation, and complete PCIe negotiated-link analysis. macOS and Windows
@@ -193,8 +203,10 @@ Exit codes:
 
 1. Add authenticated agent-to-collector transport.
 2. Connect the console to the Redfish/OpenBMC remediation endpoint.
-3. Add the NVMe SMART and health probe.
+3. ~~Add the NVMe SMART and health probe.~~ Done — see `--test-nvme`.
 4. Package the Linux agent into an iPXE/netboot image.
-5. Persist reports and repair-state transitions.
+5. ~~Persist reports and repair-state transitions.~~ Done — see the D1-backed
+   `machines`, `diagnostic_reports`, and `repair_orders` tables and the
+   `/api/reports` and `/api/machines` routes.
 6. Replace simulated console actions with collector and ticketing APIs.
 

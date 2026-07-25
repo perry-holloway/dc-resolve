@@ -33,6 +33,12 @@ offline or image-build environment.
 -test-thermal
     Audit Redfish temperatures, fans, power supplies, and voltage rails.
 
+-test-nvme
+    Audit NVMe SMART health using smartctl.
+
+-nvme-max-percentage-used int
+    Degrade an NVMe device once percentage_used reaches this value. Default: 90.
+
 -tui
     Show results in the interactive local field dashboard instead of JSON.
 
@@ -78,10 +84,23 @@ sudo ./dce-diag --test-pcie
 Some Linux systems require elevated privileges for complete `lspci -vvv`
 details.
 
+### NVMe SMART audit
+
+```bash
+./dce-diag --test-nvme --nvme-max-percentage-used=80
+```
+
+Requires `smartctl` (smartmontools). Reading raw NVMe SMART logs on Linux
+typically requires elevated privileges:
+
+```bash
+sudo ./dce-diag --test-nvme
+```
+
 ### Combined run
 
 ```bash
-./dce-diag --test-memory --mem-mb=4096 --mem-sec=300 --test-pcie
+./dce-diag --test-memory --mem-mb=4096 --mem-sec=300 --test-pcie --test-nvme
 ```
 
 Results are emitted sequentially as formatted JSON objects.
