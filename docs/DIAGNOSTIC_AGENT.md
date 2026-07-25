@@ -9,7 +9,8 @@ go test ./...
 go build -trimpath -o dce-diag ./cmd/dce-diag
 ```
 
-No third-party Go modules are required.
+The dashboard uses Bubble Tea v2. Run `go mod download` before building in an
+offline or image-build environment.
 
 ## Command-line reference
 
@@ -28,6 +29,24 @@ No third-party Go modules are required.
 
 -test-pcie
     Audit PCIe inventory and negotiated links.
+
+-test-thermal
+    Audit Redfish temperatures, fans, power supplies, and voltage rails.
+
+-tui
+    Show results in the interactive local field dashboard instead of JSON.
+
+-bmc-url string
+    Redfish BMC base URL. Required by -test-thermal.
+
+-bmc-user string
+    Redfish username. Read the password from BMC_PASSWORD.
+
+-bmc-system-id string
+    Redfish Systems resource ID. Default: system.
+
+-bmc-chassis-id string
+    Redfish Chassis resource ID. Default: chassis.
 ```
 
 At least one test flag is required.
@@ -66,6 +85,22 @@ details.
 ```
 
 Results are emitted sequentially as formatted JSON objects.
+
+### Crash-cart dashboard with thermal telemetry
+
+```bash
+export BMC_PASSWORD='from-your-secret-manager'
+./dce-diag \
+  --test-memory --mem-mb=4096 --mem-sec=300 \
+  --test-pcie --test-thermal --tui \
+  --bmc-url=https://192.0.2.10 \
+  --bmc-user=diagnostics \
+  --bmc-chassis-id=chassis
+```
+
+Use the arrow keys or `j`/`k` to select a result and `q` to exit. The thermal
+probe fails readings whose Redfish health is not `OK` or whose value reaches a
+critical minimum/maximum threshold.
 
 ## Cross-compilation
 
@@ -131,7 +166,9 @@ The existing tests cover:
 - DIMM-label extraction;
 - portable memory verification;
 - Linux PCIe topology parsing;
-- expected-device detection.
+- expected-device detection;
+- Redfish temperature, fan, PSU, and voltage handling;
+- terminal-dashboard navigation and rendering.
 
 Hardware command execution should also be tested on representative Linux and
 Mac systems before production use.
@@ -158,3 +195,22 @@ if result.Status == ocp.StatusFail {
 FRU replacement work-order payload. Locate-LED errors are non-fatal so a BMC
 connectivity problem does not suppress ticket creation. Keep BMC credentials in
 a secret manager and use a trusted TLS configuration in production.
+
+## Netboot deployment
+
+1. Build a static Linux binary:
+
+   ```bash
+   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+     go build -trimpath -o dce-diag-linux-amd64 ./cmd/dce-diag
+   ```
+
+2. Copy the binary and its trusted CA bundle into a minimal Alpine/LinuxKit
+   initramfs.
+3. Publish the kernel and initramfs on the management-network HTTP boot server.
+4. Customize `boot.ipxe` with the internal artifact URL.
+5. Boot a lab tray and verify serial-console input, BMC reachability, report
+   delivery, and safe reprovisioning before fleet rollout.
+
+Never embed BMC credentials in `boot.ipxe` or the initramfs. Issue short-lived
+credentials after the diagnostic environment establishes machine identity.

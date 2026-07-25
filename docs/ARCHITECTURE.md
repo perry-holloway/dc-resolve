@@ -11,10 +11,12 @@ The design separates hardware execution from the technician interface:
 1. The **diagnostic agent** runs close to the hardware.
 2. **Probes** normalize platform-specific evidence.
 3. The **result envelope** provides a stable machine-readable contract.
-4. The **collector** accepts completed diagnostic reports.
-5. The **remediation engine** activates the chassis locate LED and generates a
+4. The **local TUI** presents completed checks on crash-cart and serial
+   consoles.
+5. The **collector** accepts completed diagnostic reports.
+6. The **remediation engine** activates the chassis locate LED and generates a
    field-repair ticket payload for failed results.
-6. The **operations console** presents prioritized repair guidance.
+7. The **operations console** presents prioritized repair guidance.
 
 ## Runtime flow
 
@@ -90,6 +92,21 @@ normally expose the needed EDAC/ECC topology.
 
 Expected-device strings can be supplied programmatically and are matched
 case-insensitively against the platform inventory.
+
+### Thermal and power probe
+
+The BMC client reads the Redfish chassis `Thermal` and `Power` resources. It
+normalizes temperature, fan, power-supply, and voltage readings and fails
+sensors that report non-OK health or cross a critical threshold. Missing BMC
+configuration, transport errors, non-2xx responses, and malformed payloads
+produce `CANNOT_RUN`.
+
+## Local field dashboard
+
+The Bubble Tea dashboard consumes the same `DiagnosticResult` objects used by
+JSON reporting. It supports arrow-key and `j`/`k` navigation, displays the
+selected failure evidence, and runs in the terminal alternate screen so the
+technician's existing console contents are restored on exit.
 
 ## Collector
 

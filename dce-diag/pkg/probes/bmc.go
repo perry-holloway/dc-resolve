@@ -17,6 +17,7 @@ type BMCClient struct {
 	Username   string
 	Password   string
 	SystemID   string
+	ChassisID  string
 	HTTPClient *http.Client
 }
 

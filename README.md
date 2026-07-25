@@ -3,7 +3,8 @@
 DC Resolve is a technician-first hardware diagnostic system for data center
 engineering. It combines an interactive repair console with a cross-platform Go
 diagnostic agent that runs memory and PCIe checks, emits structured OCP-style
-results, and can send reports to a central collector.
+results, audits BMC thermal and power telemetry, and can send reports to a
+central collector.
 
 > **Project status:** functional prototype. The web console currently uses
 > simulated machine telemetry. The Go agent performs real local checks, subject
@@ -18,6 +19,9 @@ results, and can send reports to a central collector.
 - Runs SAT when available, with a portable memory-pattern verifier as fallback.
 - Audits Linux PCIe link width and speed using `lspci`.
 - Inventories macOS PCIe devices using `system_profiler`.
+- Audits Redfish temperatures, fan RPM, PSU health, and voltage rails.
+- Provides an interactive Bubble Tea dashboard for crash-cart and serial-console
+  technicians.
 - Produces consistent JSON results with `PASS`, `FAIL`, or `CANNOT_RUN`.
 - Accepts diagnostic reports through a bounded central collector HTTP API.
 - Builds native binaries for Linux, Windows, Intel Mac, and Apple Silicon.
@@ -29,8 +33,10 @@ flowchart LR
     A["Machine or netboot environment"] --> B["dce-diag agent"]
     B --> C["Memory probe"]
     B --> D["PCIe probe"]
+    B --> T["Redfish thermal/power probe"]
     C --> E["OCP-style JSON results"]
     D --> E
+    T --> E
     E --> F["Central collector"]
     F --> G["DC Resolve repair console"]
     G --> H["FRU replacement workflow"]
@@ -43,6 +49,7 @@ The repository contains two complementary products:
 | Operations console | `app/` | Repair queue, diagnosis evidence, FRU guidance, SAT and PCIe workflows |
 | Diagnostic agent | `dce-diag/` | Local hardware checks and structured result generation |
 | Collector | `dce-diag/pkg/collector/` | Report ingestion and failure classification |
+| Field dashboard | `dce-diag/pkg/tui/` | Interactive local result navigation |
 | Sites runtime | `worker/`, `build/`, `.openai/` | Cloudflare-compatible application packaging |
 
 ## Live application
@@ -80,7 +87,7 @@ pnpm run build
 
 Requirements:
 
-- Go 1.22 or newer
+- Go 1.25 or newer
 
 ```bash
 cd dce-diag
@@ -104,6 +111,19 @@ Run both:
 
 ```bash
 ./dce-diag --test-memory --mem-mb=1024 --mem-sec=15 --test-pcie
+```
+
+Run a Redfish thermal/power audit and open the field dashboard:
+
+```bash
+export BMC_PASSWORD='from-your-secret-manager'
+./dce-diag \
+  --test-memory --mem-mb=1024 --mem-sec=15 \
+  --test-pcie --test-thermal --tui \
+  --bmc-url=https://192.0.2.10 \
+  --bmc-user=diagnostics \
+  --bmc-system-id=system \
+  --bmc-chassis-id=chassis
 ```
 
 ## Platform behavior
@@ -172,7 +192,7 @@ Exit codes:
 
 1. Add authenticated agent-to-collector transport.
 2. Connect the console to the Redfish/OpenBMC remediation endpoint.
-3. Add NVMe SMART and thermal/power probes.
+3. Add the NVMe SMART and health probe.
 4. Package the Linux agent into an iPXE/netboot image.
 5. Persist reports and repair-state transitions.
 6. Replace simulated console actions with collector and ticketing APIs.
