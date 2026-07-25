@@ -9,4 +9,5 @@ export function getDb() {
     );
   }
 
-  return drizzle(env.DB, { sc
+  return drizzle(env.DB, { schema });
+}

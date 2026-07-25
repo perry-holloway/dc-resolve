@@ -15,4 +15,4 @@ const eslintConfig = defineConfig([
   ]),
 ]);
 
-export defau
+export default eslintConfig;

@@ -43,4 +43,5 @@ next-env.d.ts
 
 # generated diagnostic binaries
 /dce-diag/dce-diag
-/dce
+/dce-diag/dce-diag.exe
+/dce-diag/dce-diag-*

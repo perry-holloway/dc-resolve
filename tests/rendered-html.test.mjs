@@ -85,4 +85,7 @@ test("keeps the loading skeleton scoped and disposable", async () => {
   assert.doesNotMatch(layout, /codex-preview|_sites-preview|themeColor|\bViewport\b/);
   assert.doesNotMatch(css, /(^|\s)(html|body)\s*\{/m);
 
-  awai
+  await assert.rejects(
+    access(new URL("public/_sites-preview", templateRoot)),
+  );
+});
