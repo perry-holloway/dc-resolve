@@ -1,2 +1,175 @@
-# dc-resolve
-Cross-platform data center hardware diagnostics, FRU isolation, OCP-style reporting, and technician operations console.
+# DC Resolve
+
+DC Resolve is a technician-first hardware diagnostic system for data center
+engineering. It combines an interactive repair console with a cross-platform Go
+diagnostic agent that runs memory and PCIe checks, emits structured OCP-style
+results, and can send reports to a central collector.
+
+> **Project status:** functional prototype. The web console currently uses
+> simulated machine telemetry. The Go agent performs real local checks, subject
+> to the capabilities exposed by the host operating system.
+
+## What it does
+
+- Prioritizes machines by severity and diagnostic confidence.
+- Maps hardware findings to rack, tray, FRU, board silkscreen, and replacement
+  part.
+- Models locate-LED and repair-order actions.
+- Runs SAT when available, with a portable memory-pattern verifier as fallback.
+- Audits Linux PCIe link width and speed using `lspci`.
+- Inventories macOS PCIe devices using `system_profiler`.
+- Produces consistent JSON results with `PASS`, `FAIL`, or `CANNOT_RUN`.
+- Accepts diagnostic reports through a bounded central collector HTTP API.
+- Builds native binaries for Linux, Windows, Intel Mac, and Apple Silicon.
+
+## System overview
+
+```mermaid
+flowchart LR
+    A["Machine or netboot environment"] --> B["dce-diag agent"]
+    B --> C["Memory probe"]
+    B --> D["PCIe probe"]
+    C --> E["OCP-style JSON results"]
+    D --> E
+    E --> F["Central collector"]
+    F --> G["DC Resolve repair console"]
+    G --> H["FRU replacement workflow"]
+```
+
+The repository contains two complementary products:
+
+| Component | Location | Purpose |
+| --- | --- | --- |
+| Operations console | `app/` | Repair queue, diagnosis evidence, FRU guidance, SAT and PCIe workflows |
+| Diagnostic agent | `dce-diag/` | Local hardware checks and structured result generation |
+| Collector | `dce-diag/pkg/collector/` | Report ingestion and failure classification |
+| Sites runtime | `worker/`, `build/`, `.openai/` | Cloudflare-compatible application packaging |
+
+## Live application
+
+The private prototype is deployed at:
+
+[dc-resolve-operations.p-holloway.chatgpt.site](https://dc-resolve-operations.p-holloway.chatgpt.site)
+
+The deployed controls simulate hardware execution until the console is connected
+to a real diagnostic-agent service.
+
+## Quick start
+
+### Web console
+
+Requirements:
+
+- Node.js 22.13 or newer
+- pnpm 11 or newer
+
+```bash
+pnpm install
+pnpm run dev
+```
+
+Open the local URL printed by the development server.
+
+Production validation:
+
+```bash
+pnpm run build
+```
+
+### Go diagnostic agent
+
+Requirements:
+
+- Go 1.22 or newer
+
+```bash
+cd dce-diag
+go test ./...
+go build -o dce-diag ./cmd/dce-diag
+```
+
+Run a short memory check:
+
+```bash
+./dce-diag --test-memory --mem-mb=1024 --mem-sec=15
+```
+
+Run the PCIe audit:
+
+```bash
+./dce-diag --test-pcie
+```
+
+Run both:
+
+```bash
+./dce-diag --test-memory --mem-mb=1024 --mem-sec=15 --test-pcie
+```
+
+## Platform behavior
+
+| Platform | Memory diagnostic | PCIe diagnostic |
+| --- | --- | --- |
+| Linux | Uses `sat` when installed; otherwise portable pattern verification | Uses `lspci -vvv`, including downgraded speed/width detection |
+| macOS | Portable pattern verification | Uses `system_profiler SPPCIDataType -json` |
+| Windows | Portable pattern verification | Returns `CANNOT_RUN` unless a compatible `lspci` is installed |
+
+Linux is the intended production environment for server-grade ECC telemetry,
+DIMM isolation, and complete PCIe negotiated-link analysis. macOS and Windows
+are useful for development and portable memory verification but generally do
+not expose physical DIMM mappings.
+
+## Result format
+
+Every probe returns the same result envelope:
+
+```json
+{
+  "test_name": "Memory_SAT_BurnIn",
+  "timestamp": "2026-07-25T15:00:00Z",
+  "status": "FAIL",
+  "fru_location": "DIMM_B1",
+  "failure_reason": "memory hardware error detected during stress test",
+  "details": {
+    "engine": "sat"
+  }
+}
+```
+
+Exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | All requested diagnostics passed |
+| `1` | At least one diagnostic failed |
+| `2` | Invalid invocation or a diagnostic could not run |
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Diagnostic agent guide](docs/DIAGNOSTIC_AGENT.md)
+- [Collector API](docs/COLLECTOR_API.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security model](SECURITY.md)
+
+## Important limitations
+
+- The web console contains representative, simulated fleet data.
+- Locate-LED and repair-order actions are UI simulations.
+- The collector uses HTTP/JSON today; a true protobuf/gRPC transport remains a
+  future integration.
+- Portable memory mode verifies written patterns but cannot diagnose ECC
+  counters or identify a physical DIMM.
+- macOS PCIe output depends on what `system_profiler` exposes on that model.
+- Production deployments need authentication, authorization, TLS, durable
+  storage, secrets management, rate limiting, and audit retention.
+
+## Roadmap
+
+1. Add authenticated agent-to-collector transport.
+2. Connect Redfish/OpenBMC telemetry and locate-LED controls.
+3. Add NVMe SMART and thermal/power probes.
+4. Package the Linux agent into an iPXE/netboot image.
+5. Persist reports and repair-state transitions.
+6. Replace simulated console actions with collector and ticketing APIs.
+

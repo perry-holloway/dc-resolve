@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run lint
+
+  agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dce-diag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: dce-diag/go.mod
+      - run: go fmt ./...
+      - run: git diff --exit-code
+        working-directory: .
+      - run: go vet ./...
+      - run: go test ./...
+      - run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o /tmp/dce-diag-darwin-arm64 ./cmd/dce-diag
+      - run: CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -o /tmp/dce-diag-darwin-amd64 ./cmd/dce-diag
+
