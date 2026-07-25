@@ -166,6 +166,7 @@ Exit codes:
 
 ## Documentation
 
+- [Usage guide](docs/USAGE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Diagnostic agent guide](docs/DIAGNOSTIC_AGENT.md)
 - [Collector API](docs/COLLECTOR_API.md)
@@ -196,3 +197,4 @@ Exit codes:
 4. Package the Linux agent into an iPXE/netboot image.
 5. Persist reports and repair-state transitions.
 6. Replace simulated console actions with collector and ticketing APIs.
+
