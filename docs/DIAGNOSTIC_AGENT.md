@@ -136,3 +136,25 @@ The existing tests cover:
 Hardware command execution should also be tested on representative Linux and
 Mac systems before production use.
 
+## Field remediation
+
+Create a BMC client and pass it to the remediation engine:
+
+```go
+bmc := probes.NewBMCClient(
+    "https://bmc.example.internal",
+    os.Getenv("BMC_USERNAME"),
+    os.Getenv("BMC_PASSWORD"),
+    "system",
+)
+engine := remediation.NewRemediationEngine(bmc)
+
+if result.Status == ocp.StatusFail {
+    _ = engine.ProcessFailure(serverSerial, result)
+}
+```
+
+`ProcessFailure` requests a blinking Redfish `IndicatorLED`, then generates a
+FRU replacement work-order payload. Locate-LED errors are non-fatal so a BMC
+connectivity problem does not suppress ticket creation. Keep BMC credentials in
+a secret manager and use a trusted TLS configuration in production.

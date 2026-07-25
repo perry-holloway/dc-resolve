@@ -12,7 +12,9 @@ The design separates hardware execution from the technician interface:
 2. **Probes** normalize platform-specific evidence.
 3. The **result envelope** provides a stable machine-readable contract.
 4. The **collector** accepts completed diagnostic reports.
-5. The **operations console** presents prioritized repair guidance.
+5. The **remediation engine** activates the chassis locate LED and generates a
+   field-repair ticket payload for failed results.
+6. The **operations console** presents prioritized repair guidance.
 
 ## Runtime flow
 
@@ -22,6 +24,8 @@ sequenceDiagram
     participant A as dce-diag agent
     participant P as Hardware probes
     participant C as Collector
+    participant R as Remediation engine
+    participant B as BMC / repair queue
     participant U as Technician console
 
     T->>A: Start requested diagnostics
@@ -30,6 +34,13 @@ sequenceDiagram
     A-->>T: JSON output and exit code
     A->>C: POST completed DiagnosticReport
     C->>C: Classify PASS/FAIL
+    alt Result is FAIL
+        C->>R: ProcessFailure
+        R->>B: Blink locate LED
+        R->>B: Generate FRU work order payload
+    else Result is PASS
+        C->>C: Continue reprovisioning workflow
+    end
     C-->>A: 202 Accepted receipt
     C-->>U: Report available for repair workflow
 ```
@@ -94,6 +105,23 @@ the accepted time, aggregate status, and failure count.
 The `OnReport` callback is the extension point for persistence, ticketing,
 telemetry, or BMC actions.
 
+## Field remediation
+
+`pkg/remediation` accepts failed `DiagnosticResult` values and converts them
+into field actions:
+
+- request a blinking chassis locate LED through the BMC Redfish API;
+- generate a repair-ticket payload containing the server serial, failing test,
+  FRU location, failure reason, and replacement instruction.
+
+The locate-LED request uses `PATCH /redfish/v1/Systems/{system_id}` with the
+Redfish `IndicatorLED` property. BMC errors are logged but do not prevent ticket
+generation. Passing and `CANNOT_RUN` results do not trigger remediation.
+
+The ticket payload is currently logged. Production deployment still requires a
+Jira, ServiceNow, or internal repair-queue adapter connected through the
+collector's `OnReport` callback.
+
 ## Trust boundaries
 
 ```mermaid
@@ -116,4 +144,3 @@ flowchart TB
 Probe output must be treated as untrusted data. A production collector should
 authenticate agents, authorize machine identities, sanitize stored evidence,
 and maintain an immutable audit trail.
-

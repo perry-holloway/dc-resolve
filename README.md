@@ -155,7 +155,11 @@ Exit codes:
 ## Important limitations
 
 - The web console contains representative, simulated fleet data.
-- Locate-LED and repair-order actions are UI simulations.
+- The Go remediation engine can control a Redfish/OpenBMC locate LED. The web
+  console's locate-LED action remains simulated until it is connected to the
+  collector.
+- Repair-order payloads are generated and logged; Jira, ServiceNow, or an
+  internal repair-queue adapter still needs to deliver them.
 - The collector uses HTTP/JSON today; a true protobuf/gRPC transport remains a
   future integration.
 - Portable memory mode verifies written patterns but cannot diagnose ECC
@@ -167,9 +171,8 @@ Exit codes:
 ## Roadmap
 
 1. Add authenticated agent-to-collector transport.
-2. Connect Redfish/OpenBMC telemetry and locate-LED controls.
+2. Connect the console to the Redfish/OpenBMC remediation endpoint.
 3. Add NVMe SMART and thermal/power probes.
 4. Package the Linux agent into an iPXE/netboot image.
 5. Persist reports and repair-state transitions.
 6. Replace simulated console actions with collector and ticketing APIs.
-
