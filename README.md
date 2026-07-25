@@ -6,9 +6,11 @@ diagnostic agent that runs memory and PCIe checks, emits structured OCP-style
 results, audits BMC thermal and power telemetry, and can send reports to a
 central collector.
 
-> **Project status:** functional prototype. The web console currently uses
-> simulated machine telemetry. The Go agent performs real local checks, subject
-> to the capabilities exposed by the host operating system.
+> **Project status:** functional prototype. The web console shows live,
+> D1-backed machine and repair-order data once reports have been ingested
+> through `/api/reports`, and falls back to representative simulated fleet
+> data otherwise. The Go agent performs real local checks, subject to the
+> capabilities exposed by the host operating system.
 
 ## What it does
 
@@ -185,12 +187,26 @@ Exit codes:
 
 ## Important limitations
 
-- The web console contains representative, simulated fleet data.
+- The web console falls back to representative, simulated fleet data when
+  `/api/machines` returns nothing (for example, a fresh database with no
+  ingested reports yet).
+- The D1 persistence layer (`db/schema.ts`, `app/api/reports`,
+  `app/api/machines`, `app/api/repair-orders`) is wired into the Next.js/
+  Cloudflare Worker app, not into the standalone Go collector
+  (`dce-diag/pkg/collector`). To persist reports submitted to that collector,
+  forward them from its `OnReport` callback to the deployed app's
+  `POST /api/reports` endpoint, or have agents submit directly to
+  `/api/reports` using the same JSON shape.
+- Repair orders are auto-opened on ingested FAIL results and persisted in D1,
+  and can be created manually from the console, but no Jira, ServiceNow, or
+  internal ticketing adapter delivers them externally yet.
+- Machine status rollup and confidence scores in `app/api/machines` are
+  simple placeholders (any FAIL is "critical", any remaining CANNOT_RUN is
+  "investigating", confidence is a fixed value per status) rather than a real
+  severity/scoring model.
 - The Go remediation engine can control a Redfish/OpenBMC locate LED. The web
   console's locate-LED action remains simulated until it is connected to the
   collector.
-- Repair-order payloads are generated and logged; Jira, ServiceNow, or an
-  internal repair-queue adapter still needs to deliver them.
 - The collector uses HTTP/JSON today; a true protobuf/gRPC transport remains a
   future integration.
 - Portable memory mode verifies written patterns but cannot diagnose ECC

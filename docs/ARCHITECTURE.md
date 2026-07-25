@@ -62,8 +62,13 @@ The current page includes:
 - PCIe topology and negotiated-link simulation;
 - locate-LED and repair-order interaction states.
 
-The console deliberately labels its telemetry as simulated. No browser action
-currently reaches BMC hardware or the Go collector.
+On load, the page fetches `GET /api/machines`. If that returns one or more
+D1-backed machines, the queue renders live data and the sidebar reports a
+"Live environment"; otherwise it falls back to a small representative
+simulated dataset and reports a "Lab environment". "Create repair order"
+posts to `/api/repair-orders` when live data is active. The memory burn-in
+and PCIe audit controls are still simulated — no browser action reaches BMC
+hardware or the Go collector directly.
 
 ## Diagnostic agent
 
@@ -138,6 +143,32 @@ the accepted time, aggregate status, and failure count.
 
 The `OnReport` callback is the extension point for persistence, ticketing,
 telemetry, or BMC actions.
+
+## Persistence (D1)
+
+The operations console owns its own durable storage, independent of the Go
+collector above. Three Drizzle-defined tables live in `db/schema.ts`:
+
+- `machines` — one row per server serial, with a `status` rollup
+  ("critical" / "investigating" / "healthy") derived from that machine's most
+  recent diagnostic results.
+- `diagnostic_reports` — one row per `ocp.DiagnosticResult` ever received,
+  the durable evidence trail behind a machine's status.
+- `repair_orders` — FRU-level repair actions, opened automatically when an
+  ingested report contains a `FAIL` result, or created directly from the
+  console.
+
+`POST /api/reports` (`app/api/reports/route.ts`) accepts the same JSON shape
+as the Go collector's `POST /v1/reports` and is the write path into these
+tables: it upserts the machine row, inserts a `diagnostic_reports` row per
+result, and opens a `repair_orders` row for any new `FAIL`.
+`GET /api/machines` (`app/api/machines/route.ts`) reads this state back out,
+shaped for the console's repair queue. `app/api/repair-orders/route.ts`
+lists, creates, and updates repair order status.
+
+This path is separate from the standalone Go collector's `OnReport` hook —
+see "Persisting reports to the operations console" in
+[`COLLECTOR_API.md`](COLLECTOR_API.md) for how to bridge the two.
 
 ## Field remediation
 

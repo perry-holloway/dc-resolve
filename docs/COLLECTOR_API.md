@@ -89,6 +89,46 @@ Content-Type: application/json
 - Validation failure: `422 Unprocessable Entity`.
 - Invalid JSON: `400 Bad Request`.
 
+## Persisting reports to the operations console
+
+This package's `OnReport` callback is the extension point for persistence —
+it does not persist reports on its own. The operations console app
+(`app/`) has a separate, D1-backed ingestion endpoint that accepts the exact
+same JSON body:
+
+```http
+POST /api/reports
+Content-Type: application/json
+```
+
+using the identical `{ server_serial, tray_id, results }` shape documented
+above. It upserts a `machines` row, inserts one `diagnostic_reports` row per
+result, and opens a `repair_orders` row for any `FAIL` result that doesn't
+already have one open. See `db/schema.ts` and `app/api/reports/route.ts`.
+
+To have this collector persist into that database, forward accepted reports
+from `OnReport`:
+
+```go
+server := &collector.CollectorServer{
+    OnReport: func(report collector.DiagnosticReport, receipt collector.Receipt) error {
+        body, err := json.Marshal(report)
+        if err != nil {
+            return err
+        }
+        resp, err := http.Post("https://<your-deployment>/api/reports", "application/json", bytes.NewReader(body))
+        if err != nil {
+            return err
+        }
+        defer resp.Body.Close()
+        return nil
+    },
+}
+```
+
+Alternatively, agents can skip this standalone collector entirely and submit
+directly to `/api/reports`.
+
 ## Production requirements
 
 The prototype does not yet provide:
@@ -97,11 +137,11 @@ The prototype does not yet provide:
 - agent authentication or machine attestation;
 - replay protection;
 - authorization policy;
-- durable report storage;
 - rate limiting;
 - metrics and tracing;
 - protobuf/gRPC transport.
 
-Place it behind an authenticated service boundary before accepting reports from
-real machines.
+`/api/reports` gives the console durable report storage in D1, but it still
+sits behind no authentication — place it behind an authenticated service
+boundary before accepting reports from real machines.
 
