@@ -1,0 +1,12 @@
+#!ipxe
+
+# DC Resolve diagnostic boot example.
+# Replace the URL and image names with artifacts published by your management
+# network. Keep diagnostics and credentials off the public internet.
+
+set base-url http://pxe.example.internal/dc-resolve
+set console console=tty0 console=ttyS0,115200n8
+
+kernel ${base-url}/vmlinuz ip=dhcp ${console} rd.shell=0
+initrd ${base-url}/initramfs-dce-diag.img
+boot
