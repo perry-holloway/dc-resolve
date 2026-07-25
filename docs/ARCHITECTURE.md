@@ -1,0 +1,119 @@
+# Architecture
+
+## Design goals
+
+DC Resolve is organized around a simple operational outcome: turn a raw hardware
+signal into an exact, evidence-backed repair action while minimizing machine
+downtime.
+
+The design separates hardware execution from the technician interface:
+
+1. The **diagnostic agent** runs close to the hardware.
+2. **Probes** normalize platform-specific evidence.
+3. The **result envelope** provides a stable machine-readable contract.
+4. The **collector** accepts completed diagnostic reports.
+5. The **operations console** presents prioritized repair guidance.
+
+## Runtime flow
+
+```mermaid
+sequenceDiagram
+    participant T as Tray or host
+    participant A as dce-diag agent
+    participant P as Hardware probes
+    participant C as Collector
+    participant U as Technician console
+
+    T->>A: Start requested diagnostics
+    A->>P: Run memory and/or PCIe checks
+    P-->>A: DiagnosticResult
+    A-->>T: JSON output and exit code
+    A->>C: POST completed DiagnosticReport
+    C->>C: Classify PASS/FAIL
+    C-->>A: 202 Accepted receipt
+    C-->>U: Report available for repair workflow
+```
+
+## Web console
+
+The console is a React application built with the vinext compatibility layer and
+packaged for a Cloudflare Worker-compatible runtime.
+
+The current page includes:
+
+- repair queue filtering and search;
+- machine and physical-location context;
+- FRU recommendation and replacement part;
+- OCP diagnostic evidence;
+- configurable memory burn-in simulation;
+- PCIe topology and negotiated-link simulation;
+- locate-LED and repair-order interaction states.
+
+The console deliberately labels its telemetry as simulated. No browser action
+currently reaches BMC hardware or the Go collector.
+
+## Diagnostic agent
+
+The Go module is intentionally dependency-light and uses only the standard
+library. This keeps the agent easy to cross-compile and suitable for minimal
+recovery or netboot environments.
+
+### Memory probe
+
+The memory probe selects its engine at runtime:
+
+- If `sat` is on `PATH`, execute it with the configured memory and duration.
+- Otherwise, allocate the requested memory, write deterministic byte patterns,
+  and verify every byte for one or more passes.
+
+SAT output can identify labels such as `DIMM_B1` or `CPU0_DIMM3`. Portable mode
+cannot map memory to a physical socket because consumer operating systems do not
+normally expose the needed EDAC/ECC topology.
+
+### PCIe probe
+
+- **Linux:** parse `lspci -vvv` device blocks, link capabilities, negotiated
+  state, and downgrade indicators.
+- **macOS:** parse `system_profiler SPPCIDataType -json` recursively.
+- **Other systems:** report `CANNOT_RUN` when no compatible `lspci` exists.
+
+Expected-device strings can be supplied programmatically and are matched
+case-insensitively against the platform inventory.
+
+## Collector
+
+The collector exposes:
+
+- `GET /healthz`
+- `POST /v1/reports`
+
+Reports are limited to 2 MiB, unknown JSON fields are rejected, and required
+identity/result fields are validated. The collector returns a receipt containing
+the accepted time, aggregate status, and failure count.
+
+The `OnReport` callback is the extension point for persistence, ticketing,
+telemetry, or BMC actions.
+
+## Trust boundaries
+
+```mermaid
+flowchart TB
+    subgraph Machine["Untrusted / machine-local evidence"]
+      P["Probe output"]
+    end
+    subgraph Control["Controlled service boundary"]
+      C["Collector validation"]
+      S["Persistence and policy"]
+    end
+    subgraph User["Technician boundary"]
+      W["Operations console"]
+    end
+    P --> C
+    C --> S
+    S --> W
+```
+
+Probe output must be treated as untrusted data. A production collector should
+authenticate agents, authorize machine identities, sanitize stored evidence,
+and maintain an immutable audit trail.
+
