@@ -93,12 +93,32 @@ pattern verifier.
 Linux uses `lspci -vvv`; macOS uses
 `system_profiler SPPCIDataType -json`.
 
+### NVMe SMART health
+
+```bash
+./dce-diag --test-nvme
+```
+
+Requires `smartctl` (smartmontools) on `PATH`. The probe scans for attached
+NVMe devices, then reads each device's SMART health log and fails when a
+device reports a non-zero critical-warning bitmask, one or more recorded media
+errors, available spare below its threshold, or `percentage_used` at or above
+the configured limit:
+
+```bash
+./dce-diag --test-nvme --nvme-max-percentage-used=80
+```
+
+`--nvme-max-percentage-used` defaults to `90`. When `smartctl` is missing or a
+scan fails outright, the probe returns `CANNOT_RUN` rather than a false pass.
+
 ### Combined run
 
 ```bash
 ./dce-diag \
   --test-memory --mem-mb=1024 --mem-sec=15 \
-  --test-pcie
+  --test-pcie \
+  --test-nvme
 ```
 
 Without `--tui`, completed results are written as OCP-style JSON objects.
@@ -175,6 +195,48 @@ correct IDs.
 
 Use a trusted internal CA and a least-privilege BMC account. Do not disable TLS
 verification in production.
+
+## Persist diagnostic reports (D1)
+
+The console reads and writes machine, report, and repair-order state through
+a D1 database (`db/schema.ts`), not just simulated data. To turn that on for
+a deployment:
+
+1. Set `"d1": "DB"` in `.openai/hosting.json` so the platform provisions a D1
+   database and binds it to `DB` (matching what `db/index.ts` expects).
+2. Generate the migration SQL from the schema:
+
+   ```bash
+   npm run db:generate
+   ```
+
+3. Deploy the app so the platform applies the generated SQL in `drizzle/` to
+   the real D1 database.
+
+Once deployed, submit a report the same way you would to the Go collector:
+
+```bash
+curl -X POST https://<your-deployment>/api/reports \
+  -H "Content-Type: application/json" \
+  -d '{
+    "server_serial": "SN-0421",
+    "tray_id": "R42-T03",
+    "results": [
+      {
+        "test_name": "Memory_SAT_BurnIn",
+        "timestamp": "2026-07-25T15:00:00Z",
+        "status": "FAIL",
+        "fru_location": "DIMM_B1",
+        "failure_reason": "memory hardware error detected during stress test"
+      }
+    ]
+  }'
+```
+
+The console's repair queue (`GET /api/machines`) and the "Create repair
+order" button (`POST /api/repair-orders`) will then reflect this data instead
+of the simulated fallback. See "Persistence (D1)" in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for the schema and route details.
 
 ## Cross-compile
 

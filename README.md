@@ -6,9 +6,11 @@ diagnostic agent that runs memory and PCIe checks, emits structured OCP-style
 results, audits BMC thermal and power telemetry, and can send reports to a
 central collector.
 
-> **Project status:** functional prototype. The web console currently uses
-> simulated machine telemetry. The Go agent performs real local checks, subject
-> to the capabilities exposed by the host operating system.
+> **Project status:** functional prototype. The web console shows live,
+> D1-backed machine and repair-order data once reports have been ingested
+> through `/api/reports`, and falls back to representative simulated fleet
+> data otherwise. The Go agent performs real local checks, subject to the
+> capabilities exposed by the host operating system.
 
 ## What it does
 
@@ -20,6 +22,8 @@ central collector.
 - Audits Linux PCIe link width and speed using `lspci`.
 - Inventories macOS PCIe devices using `system_profiler`.
 - Audits Redfish temperatures, fan RPM, PSU health, and voltage rails.
+- Audits NVMe SMART health (critical warnings, media errors, spare capacity,
+  wear level) using `smartctl`.
 - Provides an interactive Bubble Tea dashboard for crash-cart and serial-console
   technicians.
 - Produces consistent JSON results with `PASS`, `FAIL`, or `CANNOT_RUN`.
@@ -34,9 +38,11 @@ flowchart LR
     B --> C["Memory probe"]
     B --> D["PCIe probe"]
     B --> T["Redfish thermal/power probe"]
+    B --> N["NVMe SMART probe"]
     C --> E["OCP-style JSON results"]
     D --> E
     T --> E
+    N --> E
     E --> F["Central collector"]
     F --> G["DC Resolve repair console"]
     G --> H["FRU replacement workflow"]
@@ -113,6 +119,12 @@ Run both:
 ./dce-diag --test-memory --mem-mb=1024 --mem-sec=15 --test-pcie
 ```
 
+Run an NVMe SMART health audit:
+
+```bash
+./dce-diag --test-nvme
+```
+
 Run a Redfish thermal/power audit and open the field dashboard:
 
 ```bash
@@ -128,11 +140,11 @@ export BMC_PASSWORD='from-your-secret-manager'
 
 ## Platform behavior
 
-| Platform | Memory diagnostic | PCIe diagnostic |
-| --- | --- | --- |
-| Linux | Uses `sat` when installed; otherwise portable pattern verification | Uses `lspci -vvv`, including downgraded speed/width detection |
-| macOS | Portable pattern verification | Uses `system_profiler SPPCIDataType -json` |
-| Windows | Portable pattern verification | Returns `CANNOT_RUN` unless a compatible `lspci` is installed |
+| Platform | Memory diagnostic | PCIe diagnostic | NVMe diagnostic |
+| --- | --- | --- | --- |
+| Linux | Uses `sat` when installed; otherwise portable pattern verification | Uses `lspci -vvv`, including downgraded speed/width detection | Uses `smartctl`, when installed |
+| macOS | Portable pattern verification | Uses `system_profiler SPPCIDataType -json` | Uses `smartctl`, when installed |
+| Windows | Portable pattern verification | Returns `CANNOT_RUN` unless a compatible `lspci` is installed | Uses `smartctl`, when installed |
 
 Linux is the intended production environment for server-grade ECC telemetry,
 DIMM isolation, and complete PCIe negotiated-link analysis. macOS and Windows
@@ -175,12 +187,26 @@ Exit codes:
 
 ## Important limitations
 
-- The web console contains representative, simulated fleet data.
+- The web console falls back to representative, simulated fleet data when
+  `/api/machines` returns nothing (for example, a fresh database with no
+  ingested reports yet).
+- The D1 persistence layer (`db/schema.ts`, `app/api/reports`,
+  `app/api/machines`, `app/api/repair-orders`) is wired into the Next.js/
+  Cloudflare Worker app, not into the standalone Go collector
+  (`dce-diag/pkg/collector`). To persist reports submitted to that collector,
+  forward them from its `OnReport` callback to the deployed app's
+  `POST /api/reports` endpoint, or have agents submit directly to
+  `/api/reports` using the same JSON shape.
+- Repair orders are auto-opened on ingested FAIL results and persisted in D1,
+  and can be created manually from the console, but no Jira, ServiceNow, or
+  internal ticketing adapter delivers them externally yet.
+- Machine status rollup and confidence scores in `app/api/machines` are
+  simple placeholders (any FAIL is "critical", any remaining CANNOT_RUN is
+  "investigating", confidence is a fixed value per status) rather than a real
+  severity/scoring model.
 - The Go remediation engine can control a Redfish/OpenBMC locate LED. The web
   console's locate-LED action remains simulated until it is connected to the
   collector.
-- Repair-order payloads are generated and logged; Jira, ServiceNow, or an
-  internal repair-queue adapter still needs to deliver them.
 - The collector uses HTTP/JSON today; a true protobuf/gRPC transport remains a
   future integration.
 - Portable memory mode verifies written patterns but cannot diagnose ECC
@@ -193,8 +219,10 @@ Exit codes:
 
 1. Add authenticated agent-to-collector transport.
 2. Connect the console to the Redfish/OpenBMC remediation endpoint.
-3. Add the NVMe SMART and health probe.
+3. ~~Add the NVMe SMART and health probe.~~ Done — see `--test-nvme`.
 4. Package the Linux agent into an iPXE/netboot image.
-5. Persist reports and repair-state transitions.
+5. ~~Persist reports and repair-state transitions.~~ Done — see the D1-backed
+   `machines`, `diagnostic_reports`, and `repair_orders` tables and the
+   `/api/reports` and `/api/machines` routes.
 6. Replace simulated console actions with collector and ticketing APIs.
 

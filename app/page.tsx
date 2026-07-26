@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Machine = {
   id: string;
@@ -16,7 +16,10 @@ type Machine = {
   age: string;
 };
 
-const machines: Machine[] = [
+// Fallback dataset shown until /api/machines returns real, D1-backed rows
+// (or if that request fails). See app/api/machines/route.ts for how live
+// rows are produced from ingested diagnostic reports.
+const simulatedMachines: Machine[] = [
   {
     id: "gdc-us-central1-0421",
     rack: "R42",
@@ -78,8 +81,40 @@ const statusClass: Record<Machine["status"], string> = {
   Healthy: "healthy",
 };
 
+type LiveMachine = {
+  id: string;
+  rack: string;
+  tray: string;
+  status: string;
+  issue: string;
+  component: string;
+  fru: string;
+  part: string;
+  confidence: number;
+  signal: string;
+  age: string;
+};
+
+function toDisplayStatus(status: string): Machine["status"] {
+  switch (status) {
+    case "critical":
+      return "Critical";
+    case "degraded":
+      return "Degraded";
+    case "investigating":
+      return "Investigating";
+    default:
+      return "Healthy";
+  }
+}
+
 export default function Home() {
-  const [selectedId, setSelectedId] = useState(machines[0].id);
+  const [liveMachines, setLiveMachines] = useState<Machine[] | null>(null);
+  const [liveLoadFailed, setLiveLoadFailed] = useState(false);
+  const machines = liveMachines && liveMachines.length > 0 ? liveMachines : simulatedMachines;
+  const isLive = liveMachines !== null && liveMachines.length > 0;
+
+  const [selectedId, setSelectedId] = useState(simulatedMachines[0].id);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
   const [ledOn, setLedOn] = useState(false);
@@ -89,6 +124,34 @@ export default function Home() {
   const [memoryMB, setMemoryMB] = useState(1024);
   const [durationSec, setDurationSec] = useState(15);
   const [toast, setToast] = useState("");
+  const [creatingOrder, setCreatingOrder] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMachines() {
+      try {
+        const response = await fetch("/api/machines");
+        if (!response.ok) throw new Error(`status ${response.status}`);
+        const payload = (await response.json()) as { machines?: LiveMachine[] };
+        if (cancelled) return;
+
+        const mapped = (payload.machines ?? []).map((machine) => ({
+          ...machine,
+          status: toDisplayStatus(machine.status),
+        }));
+        setLiveMachines(mapped);
+        if (mapped.length > 0) setSelectedId((current) => mapped.some((m) => m.id === current) ? current : mapped[0].id);
+      } catch {
+        if (!cancelled) setLiveLoadFailed(true);
+      }
+    }
+
+    loadMachines();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selected = machines.find((machine) => machine.id === selectedId) ?? machines[0];
   const filtered = useMemo(
@@ -100,7 +163,7 @@ export default function Home() {
             .toLowerCase()
             .includes(query.toLowerCase()),
       ),
-    [filter, query],
+    [machines, filter, query],
   );
 
   function notify(message: string) {
@@ -132,6 +195,36 @@ export default function Home() {
     }, 2100);
   }
 
+  async function createRepairOrder() {
+    if (!isLive) {
+      notify("Repair work order created (simulated — connect the console to live data first)");
+      return;
+    }
+    setCreatingOrder(true);
+    try {
+      const response = await fetch("/api/repair-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          machine_id: selected.id,
+          fru_location: selected.fru,
+          part: selected.part,
+          reason: selected.issue,
+        }),
+      });
+      if (!response.ok) throw new Error(`status ${response.status}`);
+      notify("Repair work order created");
+    } catch {
+      notify("Failed to create repair work order");
+    } finally {
+      setCreatingOrder(false);
+    }
+  }
+
+  const criticalCount = machines.filter((m) => m.status === "Critical").length;
+  const degradedCount = machines.filter((m) => m.status === "Degraded").length;
+  const investigatingCount = machines.filter((m) => m.status === "Investigating").length;
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -143,7 +236,7 @@ export default function Home() {
           </div>
         </div>
         <nav aria-label="Primary navigation">
-          <button className="nav-item active"><span>⌁</span> Repair queue <b>4</b></button>
+          <button className="nav-item active"><span>⌁</span> Repair queue <b>{machines.length}</b></button>
           <button className="nav-item"><span>▦</span> Fleet health</button>
           <button className="nav-item"><span>⚙</span> Diagnostic runs</button>
           <button className="nav-item"><span>◫</span> Rule library</button>
@@ -151,7 +244,10 @@ export default function Home() {
         </nav>
         <div className="environment">
           <span className="pulse" />
-          <div><strong>Lab environment</strong><small>Simulated telemetry</small></div>
+          <div>
+            <strong>{isLive ? "Live environment" : "Lab environment"}</strong>
+            <small>{isLive ? "D1-backed telemetry" : liveLoadFailed ? "Simulated telemetry (live fetch failed)" : "Simulated telemetry"}</small>
+          </div>
         </div>
         <div className="profile">
           <div className="avatar">PH</div>
@@ -182,9 +278,9 @@ export default function Home() {
         </header>
 
         <div className="summary-row">
-          <article><span className="summary-icon red">!</span><div><b>1</b><small>Critical</small></div><em>Needs action</em></article>
-          <article><span className="summary-icon amber">↗</span><div><b>1</b><small>Degraded</small></div><em>Monitor closely</em></article>
-          <article><span className="summary-icon blue">≈</span><div><b>2</b><small>Investigating</small></div><em>Tests in progress</em></article>
+          <article><span className="summary-icon red">!</span><div><b>{criticalCount}</b><small>Critical</small></div><em>Needs action</em></article>
+          <article><span className="summary-icon amber">↗</span><div><b>{degradedCount}</b><small>Degraded</small></div><em>Monitor closely</em></article>
+          <article><span className="summary-icon blue">≈</span><div><b>{investigatingCount}</b><small>Investigating</small></div><em>Tests in progress</em></article>
           <article><span className="summary-icon green">✓</span><div><b>99.94%</b><small>Fleet available</small></div><em>12,842 machines</em></article>
         </div>
 
@@ -234,7 +330,7 @@ export default function Home() {
               <div className="rack-visual" aria-label={`Rack ${selected.rack}, tray ${selected.tray}`}>
                 {[1,2,3,4,5,6,7,8].map((n) => <i key={n} className={n === 3 ? "lit" : ""}>{n}</i>)}
               </div>
-              <div><small>PHYSICAL LOCATION</small><h3>Rack {selected.rack.slice(1)} · Tray {selected.tray.slice(1)}</h3><p>Row C · Position 14</p></div>
+              <div><small>PHYSICAL LOCATION</small><h3>Rack {selected.rack.replace(/^R/, "")} · Tray {selected.tray.replace(/^T/, "")}</h3><p>Row C · Position 14</p></div>
               <button
                 className={ledOn ? "led-button active" : "led-button"}
                 onClick={() => { setLedOn(!ledOn); notify(`Locate LED ${!ledOn ? "blinking" : "turned off"}`); }}
@@ -358,7 +454,7 @@ export default function Home() {
 
             <div className="action-row">
               <button className="secondary" onClick={runQuickAudit} disabled={running}>{running ? <><i className="spinner" /> Running audit…</> : "Run quick audit"}</button>
-              <button className="primary" onClick={() => notify("Repair work order created")}>Create repair order <span>→</span></button>
+              <button className="primary" onClick={createRepairOrder} disabled={creatingOrder}>{creatingOrder ? "Creating…" : "Create repair order"} <span>→</span></button>
             </div>
           </aside>
         </div>
