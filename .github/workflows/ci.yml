@@ -24,6 +24,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm run lint
+      - run: pnpm run test:unit
 
   agent:
     runs-on: ubuntu-latest

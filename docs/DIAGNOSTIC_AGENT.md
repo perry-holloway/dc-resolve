@@ -39,6 +39,12 @@ offline or image-build environment.
 -nvme-max-percentage-used int
     Degrade an NVMe device once percentage_used reaches this value. Default: 90.
 
+-nvme-command-timeout-sec int
+    Maximum runtime for each smartctl command. Default: 20.
+
+-nvme-allow-no-devices
+    Treat an empty NVMe inventory as PASS. By default it is CANNOT_RUN.
+
 -tui
     Show results in the interactive local field dashboard instead of JSON.
 
@@ -96,6 +102,11 @@ typically requires elevated privileges:
 ```bash
 sudo ./dce-diag --test-nvme
 ```
+
+Each `smartctl` invocation has a bounded timeout. Inventory, command, and JSON
+parse failures produce `CANNOT_RUN` instead of being misclassified as failed
+hardware. Use `--nvme-allow-no-devices` only where an empty inventory is
+expected.
 
 ### Combined run
 

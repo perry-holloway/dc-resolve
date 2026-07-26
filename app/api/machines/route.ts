@@ -1,19 +1,7 @@
 import { and, desc, eq, ne } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { diagnosticReports, machines, repairOrders } from "../../../db/schema";
-
-function toRouteErrorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : "Unexpected error";
-  const detail =
-    error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
-  const combined = `${message}\n${detail}`;
-
-  if (combined.includes("no such table")) {
-    return "The reports tables are unavailable. Generate the migration locally with `npm run db:generate`, then deploy so the platform can apply the generated SQL to the real D1 database.";
-  }
-
-  return message;
-}
+import { requireConsoleUser } from "../../../lib/api-auth";
 
 /**
  * Maps a probe's test_name to the FRU-class label the console shows
@@ -51,6 +39,9 @@ function ageFromTimestamp(timestamp: string): string {
 }
 
 export async function GET() {
+  const authFailure = await requireConsoleUser();
+  if (authFailure) return authFailure;
+
   try {
     const db = getDb();
     const machineRows = await db
@@ -97,6 +88,7 @@ export async function GET() {
 
     return Response.json({ machines: queue });
   } catch (error) {
-    return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
+    console.error("machine listing failed", error);
+    return Response.json({ error: "machine listing failed" }, { status: 500 });
   }
 }

@@ -26,6 +26,8 @@ func main() {
 	bmcSystemID := flag.String("bmc-system-id", "system", "Redfish Systems resource ID")
 	bmcChassisID := flag.String("bmc-chassis-id", "chassis", "Redfish Chassis resource ID")
 	nvmeMaxPercentageUsed := flag.Int("nvme-max-percentage-used", 90, "mark an NVMe device degraded once percentage_used reaches this value")
+	nvmeCommandTimeout := flag.Int("nvme-command-timeout-sec", 20, "timeout for each smartctl command")
+	nvmeAllowNoDevices := flag.Bool("nvme-allow-no-devices", false, "treat an empty NVMe inventory as PASS")
 	flag.Parse()
 
 	if !*runMemory && !*runPCIe && !*runThermal && !*runNVMe {
@@ -76,6 +78,8 @@ func main() {
 	if *runNVMe {
 		result := probes.AuditNVMeHealth(probes.NVMeAuditOpts{
 			MaxPercentageUsed: *nvmeMaxPercentageUsed,
+			CommandTimeout:    time.Duration(*nvmeCommandTimeout) * time.Second,
+			AllowNoDevices:    *nvmeAllowNoDevices,
 		})
 		results = append(results, result)
 		exitCode = exitCodeForResult(result, exitCode)

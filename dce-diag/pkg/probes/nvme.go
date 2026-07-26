@@ -1,6 +1,7 @@
 package probes
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -31,6 +32,11 @@ type NVMeAuditOpts struct {
 	// indicator (NVMe SMART log's percentage_used) reaches this value.
 	// Defaults to 90 when zero or negative.
 	MaxPercentageUsed int
+	// CommandTimeout bounds each smartctl subprocess. Defaults to 20 seconds.
+	CommandTimeout time.Duration
+	// AllowNoDevices treats an empty NVMe inventory as PASS. The safe default
+	// is CANNOT_RUN because most data-center tray profiles expect storage.
+	AllowNoDevices bool
 }
 
 type smartctlScanDevice struct {
@@ -67,25 +73,42 @@ func AuditNVMeHealth(opts NVMeAuditOpts) ocp.DiagnosticResult {
 	if threshold <= 0 {
 		threshold = 90
 	}
+	if threshold > 100 {
+		return nvmeResult(ocp.StatusCannotRun, "", "nvme percentage-used threshold must be between 1 and 100", nil)
+	}
+	timeout := opts.CommandTimeout
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
 
 	smartctlPath, err := exec.LookPath("smartctl")
 	if err != nil {
 		return nvmeResult(ocp.StatusCannotRun, "", "smartctl is not installed or not on PATH", nil)
 	}
 
-	scanOutput, scanErr := exec.Command(smartctlPath, "--scan-open", "--json").CombinedOutput()
+	scanCtx, cancelScan := context.WithTimeout(context.Background(), timeout)
+	scanOutput, scanErr := exec.CommandContext(scanCtx, smartctlPath, "--scan-open", "--json").CombinedOutput()
+	scanTimedOut := scanCtx.Err() == context.DeadlineExceeded
+	cancelScan()
+	if scanTimedOut {
+		return nvmeResult(ocp.StatusCannotRun, "", "smartctl device scan timed out", nil)
+	}
 	if scanErr != nil && len(scanOutput) == 0 {
 		return nvmeResult(ocp.StatusCannotRun, "", fmt.Sprintf("failed to scan for NVMe devices: %v", scanErr), nil)
 	}
 
 	devices, err := parseSmartctlScan(scanOutput)
 	if err != nil {
-		return nvmeResult(ocp.StatusCannotRun, "", fmt.Sprintf("failed to parse smartctl scan output: %v", err), map[string]string{
-			"raw_output": strings.TrimSpace(string(scanOutput)),
-		})
+		return nvmeResult(ocp.StatusCannotRun, "", fmt.Sprintf("failed to parse smartctl scan output: %v", err), nil)
 	}
 	if len(devices) == 0 {
-		return nvmeResult(ocp.StatusPass, "", "", map[string]any{
+		status := ocp.StatusCannotRun
+		reason := "no NVMe devices detected"
+		if opts.AllowNoDevices {
+			status = ocp.StatusPass
+			reason = ""
+		}
+		return nvmeResult(status, "", reason, map[string]any{
 			"devices": []NVMeHealth{},
 			"summary": "no NVMe devices detected",
 		})
@@ -94,25 +117,35 @@ func AuditNVMeHealth(opts NVMeAuditOpts) ocp.DiagnosticResult {
 	healths := make([]NVMeHealth, 0, len(devices))
 	var failing []NVMeHealth
 	for _, device := range devices {
-		deviceOutput, deviceErr := exec.Command(smartctlPath, "-a", "-j", device).CombinedOutput()
+		deviceCtx, cancelDevice := context.WithTimeout(context.Background(), timeout)
+		deviceOutput, deviceErr := exec.CommandContext(deviceCtx, smartctlPath, "-a", "-j", device).CombinedOutput()
+		deviceTimedOut := deviceCtx.Err() == context.DeadlineExceeded
+		cancelDevice()
+		if deviceTimedOut {
+			return nvmeResult(
+				ocp.StatusCannotRun,
+				fruForNVMeDevice(device),
+				fmt.Sprintf("smartctl query timed out for %s", device),
+				map[string]any{"devices": healths},
+			)
+		}
 		if deviceErr != nil && len(deviceOutput) == 0 {
-			health := NVMeHealth{
-				Device:         device,
-				Degraded:       true,
-				DegradedReason: fmt.Sprintf("failed to query smartctl: %v", deviceErr),
-			}
-			healths = append(healths, health)
-			failing = append(failing, health)
-			continue
+			return nvmeResult(
+				ocp.StatusCannotRun,
+				fruForNVMeDevice(device),
+				fmt.Sprintf("failed to query smartctl for %s: %v", device, deviceErr),
+				map[string]any{"devices": healths},
+			)
 		}
 
 		health, err := parseSmartctlHealth(device, deviceOutput, threshold)
 		if err != nil {
-			health = NVMeHealth{
-				Device:         device,
-				Degraded:       true,
-				DegradedReason: fmt.Sprintf("failed to parse smartctl output: %v", err),
-			}
+			return nvmeResult(
+				ocp.StatusCannotRun,
+				fruForNVMeDevice(device),
+				fmt.Sprintf("failed to parse smartctl output for %s: %v", device, err),
+				map[string]any{"devices": healths},
+			)
 		}
 		healths = append(healths, health)
 		if health.Degraded {

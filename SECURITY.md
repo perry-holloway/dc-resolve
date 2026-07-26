@@ -36,7 +36,13 @@ issues or pull requests.
 
 ## Reporting a vulnerability
 
-Keep this repository private while the project is under development. Report
-security concerns directly to the repository owner rather than opening a public
-issue.
+This repository is public. Never report credentials, infrastructure identifiers,
+or exploit details in a public issue. Report security concerns privately to the
+repository owner.
+
+## Required runtime secret
+
+Production report ingestion requires `REPORT_INGEST_TOKEN`. Store it as a hosted
+secret and send it only as an `Authorization: Bearer` token from an authenticated
+collector or diagnostic agent. Rotate it immediately if it is exposed.
 
