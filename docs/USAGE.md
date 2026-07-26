@@ -212,12 +212,17 @@ a deployment:
 
 3. Deploy the app so the platform applies the generated SQL in `drizzle/` to
    the real D1 database.
+4. Configure a secret named `REPORT_INGEST_TOKEN` in the deployment. Generate
+   at least 32 random bytes and store the same value in the diagnostic
+   collector's secret manager. Never commit it to Git.
 
 Once deployed, submit a report the same way you would to the Go collector:
 
 ```bash
 curl -X POST https://<your-deployment>/api/reports \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${REPORT_INGEST_TOKEN}" \
+  -H "Idempotency-Key: SN-0421-20260725T150000Z" \
   -d '{
     "server_serial": "SN-0421",
     "tray_id": "R42-T03",
@@ -233,9 +238,14 @@ curl -X POST https://<your-deployment>/api/reports \
   }'
 ```
 
-The console's repair queue (`GET /api/machines`) and the "Create repair
-order" button (`POST /api/repair-orders`) will then reflect this data instead
-of the simulated fallback. See "Persistence (D1)" in
+Every submission must include either an `Idempotency-Key` header or a unique
+`report_id` field. Reusing a key returns a duplicate response instead of
+creating duplicate reports or work orders. Payloads are limited to 1 MiB and
+128 results.
+
+The console's read and repair-order APIs require an authenticated console
+session. The repair queue will then reflect ingested data instead of the
+simulated fallback. See "Persistence (D1)" in
 [`ARCHITECTURE.md`](ARCHITECTURE.md) for the schema and route details.
 
 ## Cross-compile

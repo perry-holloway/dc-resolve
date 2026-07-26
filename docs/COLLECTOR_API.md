@@ -99,10 +99,14 @@ same JSON body:
 ```http
 POST /api/reports
 Content-Type: application/json
+Authorization: Bearer <REPORT_INGEST_TOKEN>
+Idempotency-Key: <globally unique report key>
 ```
 
-using the identical `{ server_serial, tray_id, results }` shape documented
-above. It upserts a `machines` row, inserts one `diagnostic_reports` row per
+using the same `{ server_serial, tray_id, results }` shape documented above.
+The deployment must define `REPORT_INGEST_TOKEN`, and each request must include
+either `Idempotency-Key` or a `report_id` body field. It upserts a `machines`
+row, inserts one `diagnostic_reports` row per
 result, and opens a `repair_orders` row for any `FAIL` result that doesn't
 already have one open. See `db/schema.ts` and `app/api/reports/route.ts`.
 
@@ -116,7 +120,15 @@ server := &collector.CollectorServer{
         if err != nil {
             return err
         }
-        resp, err := http.Post("https://<your-deployment>/api/reports", "application/json", bytes.NewReader(body))
+        req, err := http.NewRequest(http.MethodPost, "https://<your-deployment>/api/reports", bytes.NewReader(body))
+        if err != nil {
+            return err
+        }
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Authorization", "Bearer "+os.Getenv("REPORT_INGEST_TOKEN"))
+        req.Header.Set("Idempotency-Key",
+            fmt.Sprintf("%s-%d", report.ServerSerial, receipt.AcceptedAt.UnixNano()))
+        resp, err := http.DefaultClient.Do(req)
         if err != nil {
             return err
         }
@@ -131,17 +143,15 @@ directly to `/api/reports`.
 
 ## Production requirements
 
-The prototype does not yet provide:
+The standalone Go collector does not yet provide:
 
 - TLS termination;
 - agent authentication or machine attestation;
-- replay protection;
-- authorization policy;
 - rate limiting;
 - metrics and tracing;
 - protobuf/gRPC transport.
 
-`/api/reports` gives the console durable report storage in D1, but it still
-sits behind no authentication — place it behind an authenticated service
-boundary before accepting reports from real machines.
+The D1 endpoint enforces a bearer ingestion token, bounded payload validation,
+and idempotent writes. For internet-facing production deployments, also place
+it behind network-layer rate limiting and machine identity or attestation.
 

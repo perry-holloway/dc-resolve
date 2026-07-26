@@ -1,165 +1,151 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { diagnosticReports, machines, repairOrders } from "../../../db/schema";
+import {
+  requireConsoleUser,
+  requireReportIngestToken,
+} from "../../../lib/api-auth";
+import {
+  activeRepairKey,
+  REPORT_LIMITS,
+  validateReportPayload,
+} from "../../../lib/report-validation.mjs";
 
-/**
- * Mirrors ocp.DiagnosticResult from the Go agent (pkg/ocp/format.go).
- */
-type IncomingResult = {
-  test_name?: string;
-  timestamp?: string;
-  status?: string;
-  fru_location?: string;
-  failure_reason?: string;
-  details?: unknown;
-};
-
-/**
- * Mirrors collector.DiagnosticReport from the Go collector
- * (dce-diag/pkg/collector/service.go), so the same JSON payload the agent
- * POSTs to a standalone collector can be POSTed here instead (or forwarded
- * here from a collector's OnReport hook).
- */
-type IncomingReport = {
-  server_serial?: string;
-  tray_id?: string;
-  results?: IncomingResult[];
-};
-
-function toRouteErrorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : "Unexpected error";
-  const detail =
-    error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
-  const combined = `${message}\n${detail}`;
-
-  if (combined.includes("no such table")) {
-    return "The reports tables are unavailable. Generate the migration locally with `npm run db:generate`, then deploy so the platform can apply the generated SQL to the real D1 database.";
-  }
-
-  return message;
-}
-
-function splitTrayId(trayId: string): { rack: string; tray: string } {
-  const dashIndex = trayId.indexOf("-");
-  if (dashIndex === -1) {
-    return { rack: "", tray: trayId };
-  }
-  return { rack: trayId.slice(0, dashIndex), tray: trayId.slice(dashIndex + 1) };
-}
-
-/**
- * Rolls a set of results up into a single machine status. This is a
- * deliberately simple starting point: any FAIL wins as "critical", any
- * CANNOT_RUN (with no FAIL present) becomes "investigating", otherwise the
- * machine is "healthy". There is no automatic "degraded" bucket yet — that
- * requires a severity policy (e.g. which test/failure combinations count as
- * degraded vs. critical) that should be layered on top of this.
- */
-function rollupStatus(
-  results: IncomingResult[],
-): "critical" | "investigating" | "healthy" {
-  if (results.some((result) => result.status === "FAIL")) return "critical";
-  if (results.some((result) => result.status === "CANNOT_RUN")) return "investigating";
-  return "healthy";
-}
+type MachineStatus = "critical" | "investigating" | "healthy";
 
 export async function POST(request: Request) {
-  try {
-    const payload = (await request.json()) as IncomingReport;
-    const serverSerial = payload.server_serial?.trim() ?? "";
-    const trayId = payload.tray_id?.trim() ?? "";
-    const results = payload.results ?? [];
+  const authFailure = await requireReportIngestToken(request);
+  if (authFailure) return authFailure;
 
-    if (!serverSerial || !trayId || results.length === 0) {
+  const declaredLength = Number(request.headers.get("content-length") ?? "0");
+  if (declaredLength > REPORT_LIMITS.bodyBytes) {
+    return Response.json({ error: "request body is too large" }, { status: 413 });
+  }
+
+  let payload: unknown;
+  try {
+    const body = await request.text();
+    if (new TextEncoder().encode(body).byteLength > REPORT_LIMITS.bodyBytes) {
+      return Response.json({ error: "request body is too large" }, { status: 413 });
+    }
+    payload = JSON.parse(body);
+  } catch {
+    return Response.json({ error: "request body must be valid JSON" }, { status: 400 });
+  }
+
+  const validation = validateReportPayload(
+    payload,
+    request.headers.get("idempotency-key"),
+  );
+  if (!validation.ok) {
+    return Response.json({ error: validation.error }, { status: 400 });
+  }
+
+  try {
+    const db = getDb();
+    const report = validation.value;
+    const [duplicate] = await db
+      .select({ id: diagnosticReports.id })
+      .from(diagnosticReports)
+      .where(eq(diagnosticReports.ingestKey, report.ingestKey))
+      .limit(1);
+    if (duplicate) {
       return Response.json(
-        { error: "server_serial, tray_id, and a non-empty results array are required" },
-        { status: 400 },
+        { duplicate: true, report_id: report.ingestKey },
+        { status: 200 },
       );
     }
 
-    for (const result of results) {
-      if (!result.test_name || !result.status) {
-        return Response.json(
-          { error: "each result requires test_name and status" },
-          { status: 400 },
-        );
-      }
-    }
-
-    const db = getDb();
-    const { rack, tray } = splitTrayId(trayId);
-    const status = rollupStatus(results);
+    const { rack, tray } = splitTrayId(report.trayId);
     const now = new Date().toISOString();
+    const [existingMachine] = await db
+      .select({ status: machines.status })
+      .from(machines)
+      .where(eq(machines.id, report.serverSerial))
+      .limit(1);
+    const incomingStatus = rollupStatus(report.results);
+    const status =
+      existingMachine?.status === "critical" && incomingStatus !== "critical"
+        ? "critical"
+        : incomingStatus;
 
-    await db
-      .insert(machines)
-      .values({ id: serverSerial, rack, tray, status, lastReportAt: now })
-      .onConflictDoUpdate({
-        target: machines.id,
-        set: { rack, tray, status, lastReportAt: now },
-      });
-
-    const insertedReports = await db
-      .insert(diagnosticReports)
-      .values(
-        results.map((result) => ({
-          machineId: serverSerial,
-          testName: result.test_name!,
-          status: result.status as "PASS" | "FAIL" | "CANNOT_RUN",
-          fruLocation: result.fru_location ?? "",
-          failureReason: result.failure_reason ?? "",
-          details: result.details === undefined ? null : JSON.stringify(result.details),
-          resultTimestamp: result.timestamp ?? now,
-        })),
-      )
-      .returning();
-
-    let repairOrdersOpened = 0;
-    for (const result of results) {
-      if (result.status !== "FAIL") continue;
-      const fruLocation = result.fru_location ?? "";
-
-      const [existingOpenOrder] = await db
-        .select({ id: repairOrders.id })
-        .from(repairOrders)
-        .where(
-          and(
-            eq(repairOrders.machineId, serverSerial),
-            eq(repairOrders.fruLocation, fruLocation),
-            eq(repairOrders.status, "open"),
-          ),
+    const failedResults = report.results.filter((result) => result.status === "FAIL");
+    const operations = [
+      db
+        .insert(machines)
+        .values({
+          id: report.serverSerial,
+          rack,
+          tray,
+          status,
+          lastReportAt: now,
+        })
+        .onConflictDoUpdate({
+          target: machines.id,
+          set: { rack, tray, status, lastReportAt: now },
+        }),
+      db
+        .insert(diagnosticReports)
+        .values(
+          report.results.map((result, resultIndex) => ({
+            machineId: report.serverSerial,
+            ingestKey: report.ingestKey,
+            resultIndex,
+            testName: result.testName,
+            status: result.status,
+            fruLocation: result.fruLocation,
+            failureReason: result.failureReason,
+            details: result.details,
+            resultTimestamp: result.timestamp || now,
+          })),
         )
-        .limit(1);
+        .onConflictDoNothing(),
+      ...failedResults.map((result) =>
+        db
+          .insert(repairOrders)
+          .values({
+            machineId: report.serverSerial,
+            fruLocation: result.fruLocation,
+            reason: result.failureReason || result.testName,
+            activeKey: activeRepairKey(report.serverSerial, result.fruLocation),
+            createdBy: "diagnostic-agent",
+          })
+          .onConflictDoNothing({ target: repairOrders.activeKey }),
+      ),
+    ] as const;
 
-      if (existingOpenOrder) continue;
-
-      await db.insert(repairOrders).values({
-        machineId: serverSerial,
-        fruLocation,
-        reason: result.failure_reason ?? result.test_name!,
-      });
-      repairOrdersOpened += 1;
-    }
+    // D1 executes batch statements as one transaction. A failed statement
+    // rolls the complete ingestion operation back.
+    await db.batch(operations);
 
     return Response.json(
       {
-        machine_id: serverSerial,
+        duplicate: false,
+        report_id: report.ingestKey,
+        machine_id: report.serverSerial,
         status,
-        reports_inserted: insertedReports.length,
-        repair_orders_opened: repairOrdersOpened,
+        reports_processed: report.results.length,
+        repair_orders_requested: failedResults.length,
       },
       { status: 201 },
     );
   } catch (error) {
-    return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
+    console.error("report ingestion failed", error);
+    return Response.json({ error: "report ingestion failed" }, { status: 500 });
   }
 }
 
 export async function GET(request: Request) {
+  const authFailure = await requireConsoleUser();
+  if (authFailure) return authFailure;
+
   try {
     const url = new URL(request.url);
     const limitParam = Number(url.searchParams.get("limit"));
-    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
+    const limit =
+      Number.isFinite(limitParam) && limitParam > 0
+        ? Math.min(Math.trunc(limitParam), 200)
+        : 50;
 
     const db = getDb();
     const rows = await db
@@ -170,6 +156,23 @@ export async function GET(request: Request) {
 
     return Response.json({ reports: rows });
   } catch (error) {
-    return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
+    console.error("report listing failed", error);
+    return Response.json({ error: "report listing failed" }, { status: 500 });
   }
+}
+
+function splitTrayId(trayId: string): { rack: string; tray: string } {
+  const dashIndex = trayId.indexOf("-");
+  if (dashIndex === -1) return { rack: "", tray: trayId };
+  return { rack: trayId.slice(0, dashIndex), tray: trayId.slice(dashIndex + 1) };
+}
+
+function rollupStatus(
+  results: Array<{ status: "PASS" | "FAIL" | "CANNOT_RUN" }>,
+): MachineStatus {
+  if (results.some((result) => result.status === "FAIL")) return "critical";
+  if (results.some((result) => result.status === "CANNOT_RUN")) {
+    return "investigating";
+  }
+  return "healthy";
 }
