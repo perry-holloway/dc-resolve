@@ -28,6 +28,8 @@ central collector.
   technicians.
 - Produces consistent JSON results with `PASS`, `FAIL`, or `CANNOT_RUN`.
 - Accepts diagnostic reports through a bounded central collector HTTP API.
+- Includes an authenticated Virtual Hardware Lab with deterministic memory,
+  NVMe, PCIe, thermal, healthy-baseline, and BMC-timeout scenarios.
 - Builds native binaries for Linux, Windows, Intel Mac, and Apple Silicon.
 
 ## System overview

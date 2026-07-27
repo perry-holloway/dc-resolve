@@ -248,6 +248,25 @@ session. The repair queue will then reflect ingested data instead of the
 simulated fallback. See "Persistence (D1)" in
 [`ARCHITECTURE.md`](ARCHITECTURE.md) for the schema and route details.
 
+## Virtual Hardware Lab
+
+The console includes an authenticated **Virtual lab** workspace for testing and
+demonstrations without physical servers or a BMC. It simulates only the hardware
+boundary; report validation, D1 persistence, machine status, and repair-order
+creation use the same production code path as real diagnostic reports.
+
+1. Sign in to the operations console.
+2. Select **Virtual lab** in the navigation.
+3. Choose a healthy, memory, NVMe, PCIe, thermal, or BMC-timeout scenario.
+4. Select **Run selected scenario**.
+5. Inspect the generated OCP-style JSON and persisted result.
+6. Open the repair queue to review the resulting machine and field action.
+
+Each run creates a unique `SIM-*` server and a unique idempotency key. Failure
+scenarios identify a FRU and create one active repair order. The BMC-timeout
+scenario produces `CANNOT_RUN` and an investigating state without inventing a
+hardware failure.
+
 ## Cross-compile
 
 Apple Silicon:
