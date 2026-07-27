@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import VirtualLab from "./virtual-lab";
 
 type Machine = {
   id: string;
@@ -109,6 +110,7 @@ function toDisplayStatus(status: string): Machine["status"] {
 }
 
 export default function Home() {
+  const [view, setView] = useState<"queue" | "lab">("queue");
   const [liveMachines, setLiveMachines] = useState<Machine[] | null>(null);
   const [liveLoadFailed, setLiveLoadFailed] = useState(false);
   const machines = liveMachines && liveMachines.length > 0 ? liveMachines : simulatedMachines;
@@ -236,7 +238,8 @@ export default function Home() {
           </div>
         </div>
         <nav aria-label="Primary navigation">
-          <button className="nav-item active"><span>⌁</span> Repair queue <b>{machines.length}</b></button>
+          <button className={`nav-item ${view === "queue" ? "active" : ""}`} onClick={() => setView("queue")}><span>⌁</span> Repair queue <b>{machines.length}</b></button>
+          <button className={`nav-item ${view === "lab" ? "active" : ""}`} onClick={() => setView("lab")}><span>◇</span> Virtual lab <b>6</b></button>
           <button className="nav-item"><span>▦</span> Fleet health</button>
           <button className="nav-item"><span>⚙</span> Diagnostic runs</button>
           <button className="nav-item"><span>◫</span> Rule library</button>
@@ -256,7 +259,12 @@ export default function Home() {
         </div>
       </aside>
 
-      <section className="workspace">
+      {view === "lab" ? (
+        <VirtualLab onOpenQueue={() => {
+          setView("queue");
+          window.location.reload();
+        }} />
+      ) : <section className="workspace">
         <header className="topbar">
           <div>
             <p className="eyebrow">OPERATIONS / REPAIR QUEUE</p>
@@ -458,7 +466,7 @@ export default function Home() {
             </div>
           </aside>
         </div>
-      </section>
+      </section>}
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
     </main>
   );
